@@ -1,0 +1,69 @@
+name: Auto-Renew-Zampto
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 每天凌晨 3:00 UTC 运行一次
+  workflow_dispatch:
+
+jobs:
+  Renew-zampto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: 📥 下载公库代码
+        uses: actions/checkout@v5
+
+      - name: 🔒 拉取私有仓库脚本
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/zampto_renew_private
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: private-scripts
+
+      - name: ⚙️ 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🛠️ 安装系统依赖和 Python 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
+          pip install requests seleniumbase
+          seleniumbase install chromedriver
+
+      - name: 🌐 设置sing-box代理转发
+        continue-on-error: true
+        env:
+          NODE_LINK: ${{ secrets.NODE_LINK }}
+        run: |
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+
+      - name: 🚀 运行私库续期脚本
+        env:
+          PYTHONIOENCODING: utf-8
+          EMAIL: ${{ secrets.EMAIL }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          NODE_LINK: "socks5://127.0.0.1:1080"
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            python3 private-scripts/zampto_renew.py
+
+      - name: 🧹 清理旧的工作流运行记录
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
+          count=0
+          for run_id in $runs; do
+            count=$((count + 1))
+            if [ $count -gt 1 ]; then
+              echo "删除运行记录: $run_id"
+              gh run delete $run_id || true
+            fi
+          done
